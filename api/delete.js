@@ -12,7 +12,7 @@ export default async function handler(req, res) {
   }
 
   const now = Date.now();
-  const twentyFourHr = 24 * 60 * 60 * 1000;
+  const twentyFourHr = 60 * 1000;
   const kept = [];
 
   for (const msg of messages) {
