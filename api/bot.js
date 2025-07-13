@@ -7,12 +7,16 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('Only POST allowed');
 
   const message = req.body.message;
-  if (!message || !message.text) return res.status(200).send('No text');
+
+  // ✅ Ignore bot's own messages
+  if (!message || !message.text || message.from?.is_bot) {
+    return res.status(200).send('Ignore non-user messages');
+  }
 
   const chatId = message.chat.id;
   const userMessageId = message.message_id;
 
-  // Reply to user
+  // ✅ Reply to user
   const reply = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -25,7 +29,7 @@ export default async function handler(req, res) {
 
   const replyData = await reply.json();
 
-  // Save both message IDs and time
+  // ✅ Save both message IDs
   const entry = {
     chat_id: chatId,
     user_message_id: userMessageId,
