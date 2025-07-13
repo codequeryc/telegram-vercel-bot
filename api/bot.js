@@ -1,35 +1,39 @@
 import fs from 'fs';
 import path from 'path';
 
-const filePath = path.join(process.cwd(), 'data/messages.json');
+const dataDir = path.join(process.cwd(), 'data');
+const messageFile = path.join(dataDir, 'messages.json');
+const updatesFile = path.join(dataDir, 'updates.json');
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('Only POST allowed');
 
-  const message = req.body.message;
+  const body = req.body;
 
-  // ✅ Ignore non-text or bot messages
+  // ✅ Check for update_id to avoid duplicates
+  const updateId = body.update_id;
+  if (!updateId) return res.status(200).send('No update_id');
+
+  let updates = [];
+  try {
+    updates = JSON.parse(fs.readFileSync(updatesFile, 'utf8'));
+  } catch (e) {}
+
+  if (updates.includes(updateId)) {
+    return res.status(200).send('Duplicate update ignored');
+  }
+
+  // ✅ Process only user messages
+  const message = body.message;
   if (!message || !message.text || message.from?.is_bot) {
-    return res.status(200).send('Ignored non-user message');
+    return res.status(200).send('Invalid or bot message ignored');
   }
 
   const chatId = message.chat.id;
   const userMessageId = message.message_id;
 
-  // ✅ Load message history (try/catch for safety)
-  let messages = [];
-  try {
-    const data = fs.readFileSync(filePath, 'utf8');
-    messages = JSON.parse(data);
-  } catch {}
-
-  // ✅ Prevent duplicate response to same message_id
-  if (messages.some(msg => msg.user_message_id === userMessageId)) {
-    return res.status(200).send('Already responded to this message');
-  }
-
-  // ✅ Send reply
-  let botReply;
+  // ✅ Reply to user
+  let replyData;
   try {
     const response = await fetch(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/sendMessage`, {
       method: 'POST',
@@ -40,30 +44,35 @@ export default async function handler(req, res) {
         reply_to_message_id: userMessageId
       })
     });
-    botReply = await response.json();
+
+    replyData = await response.json();
   } catch (err) {
-    return res.status(200).send('Telegram API failed');
+    return res.status(200).send('Telegram reply failed');
   }
 
-  // ✅ Double-check botReply success
-  if (!botReply.ok || !botReply.result?.message_id) {
-    return res.status(200).send('Bot reply failed or incomplete');
+  if (!replyData.ok || !replyData.result?.message_id) {
+    return res.status(200).send('Reply missing message_id');
   }
 
-  // ✅ Save message entry
   const entry = {
     chat_id: chatId,
     user_message_id: userMessageId,
-    bot_message_id: botReply.result.message_id,
+    bot_message_id: replyData.result.message_id,
     timestamp: Date.now()
   };
 
-  messages.push(entry);
+  // ✅ Save message to messages.json
+  let messages = [];
   try {
-    fs.writeFileSync(filePath, JSON.stringify(messages, null, 2));
-  } catch (err) {
-    return res.status(500).send('Failed to save message log');
-  }
+    messages = JSON.parse(fs.readFileSync(messageFile, 'utf8'));
+  } catch {}
 
-  res.status(200).send('Message processed');
+  messages.push(entry);
+  fs.writeFileSync(messageFile, JSON.stringify(messages, null, 2));
+
+  // ✅ Save update_id to updates.json
+  updates.push(updateId);
+  fs.writeFileSync(updatesFile, JSON.stringify(updates.slice(-1000), null, 2)); // keep last 1000 only
+
+  res.status(200).send('Message handled');
 }
